@@ -100,6 +100,33 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(output[0].dtype, video.dtype)
         self.assertEqual(output[1].dtype, audio.dtype)
 
+    def test_current_h3_short_circuit_returns_raw_audio_velocity(self):
+        audio_out = torch.tensor([1.0, -2.0])
+        result = node_module._finalize_audio_velocity(
+            audio_out,
+            torch.tensor(0.5),
+            12.0,
+            3.0,
+            raw_audio_velocity=True,
+        )
+        self.assertTrue(torch.equal(result, -audio_out))
+
+    def test_legacy_h3_short_circuit_keeps_slope_scaled_velocity(self):
+        original = node_module._legacy_time_shift_slope
+        node_module._legacy_time_shift_slope = lambda *_args: torch.tensor(0.25)
+        try:
+            audio_out = torch.tensor([4.0, -8.0])
+            result = node_module._finalize_audio_velocity(
+                audio_out,
+                torch.tensor(0.5),
+                12.0,
+                3.0,
+                raw_audio_velocity=False,
+            )
+        finally:
+            node_module._legacy_time_shift_slope = original
+        self.assertTrue(torch.equal(result, torch.tensor([-1.0, 2.0])))
+
 
 if __name__ == "__main__":
     unittest.main()

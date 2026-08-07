@@ -4,15 +4,41 @@ import logging
 
 from comfy_api.latest import io, ComfyExtension
 import comfy.ldm.common_dit
+import comfy.model_sampling
 import comfy.model_patcher
 import comfy.model_prefetch
 import comfy.patcher_extension
-from comfy.ldm.minimax.model import MiniMaxH3Model, time_shift_slope, unpack_audio, unpatchify_video
+from comfy.ldm.minimax.model import MiniMaxH3Model, unpack_audio, unpatchify_video
+
+try:
+    # Present in legacy ComfyUI H3, removed when H3 switched to raw audio velocity.
+    from comfy.ldm.minimax.model import time_shift_slope as _legacy_time_shift_slope
+except ImportError:  # Current ComfyUI
+    _legacy_time_shift_slope = None
 
 from .h3_block_cache import CACHE_KEY, H3BlockCache, H3BlockCacheConfig, H3BlockCacheHit, H3BlockPatch
 
 
 WRAPPER_KEY = "minimax_h3_block_cache_t8"
+H3_RETURNS_RAW_AUDIO_VELOCITY = hasattr(comfy.model_sampling, "ModelSamplingAV")
+
+
+def _finalize_audio_velocity(
+    audio_out,
+    sigma_video,
+    shift_video: float,
+    shift_audio: float,
+    *,
+    raw_audio_velocity: bool,
+):
+    if raw_audio_velocity:
+        return -audio_out
+    if _legacy_time_shift_slope is None:
+        raise RuntimeError("Legacy MiniMax H3 audio slope helper is unavailable")
+    audio_slope = _legacy_time_shift_slope(
+        sigma_video, shift_video, shift_audio
+    ).to(audio_out.dtype)
+    return (-audio_slope) * audio_out
 
 
 def h3_block_cache_sample_wrapper(executor, *args, **kwargs):
@@ -92,8 +118,14 @@ def h3_block_cache_diffusion_wrapper(executor, *args, **kwargs):
         sigma_video = (timestep.flatten()[0] / 1000.0).float().clamp(min=1e-6)
         shift_video = float(transformer_options.get("minimax_h3_sigma_shift_video", model.sigma_shift_video))
         shift_audio = float(transformer_options.get("minimax_h3_sigma_shift_audio", model.sigma_shift_audio))
-        audio_slope = time_shift_slope(sigma_video, shift_video, shift_audio).to(audio_out.dtype)
-        return [-video_out.to(video_x.dtype), (-audio_slope) * audio_out.to(audio_x.dtype)]
+        audio_velocity = _finalize_audio_velocity(
+            audio_out,
+            sigma_video,
+            shift_video,
+            shift_audio,
+            raw_audio_velocity=H3_RETURNS_RAW_AUDIO_VELOCITY,
+        )
+        return [-video_out.to(video_x.dtype), audio_velocity.to(audio_x.dtype)]
 
 
 class MiniMaxH3BlockCacheNode(io.ComfyNode):
