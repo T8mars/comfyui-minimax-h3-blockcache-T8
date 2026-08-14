@@ -33,7 +33,7 @@ MiniMax H3 Block Cache (T8)
 - 音频与视频分别计算 Block 0 residual diff，任一超过阈值都执行完整 50 层。
 - 缓存只保存目标音频/视频段，不保存 text、condition 或 reference rows。
 - 命中时在 Block 0 后短路 H3 block 循环，再走原生 H3 final layer 与 unpatchify；当前 ComfyUI 返回原始音频速度，旧版 ComfyUI 保留音频 schedule slope。
-- 完整步保留 ComfyUI 的 dynamic vbar 预取；命中时清理本次尚未消费的预取状态。
+- 完整步保留 ComfyUI 的 dynamic vbar 预取；命中时清理本次尚未消费的预取状态，并兼容新旧预取清理接口。
 - 所有 tensor 状态限定在一次 sampling 内，正常结束、报错或取消都会清理。
 - 不修改 ComfyUI 核心文件、不修改 Comfy Kitchen `.pyd`、不增加依赖或网络请求。
 
@@ -47,6 +47,8 @@ ComfyUI 提交 `bdcb886a4` 将 MiniMax H3 切换到 `ModelType.FLOW_AV` / `Model
 - 旧版 ComfyUI 通过可选的 `time_shift_slope` 保持原有 slope-scaled velocity 行为。
 
 当前新版已在 ComfyUI `a464ac335` 上完成白名单冷启动、完整启动，以及 FL2VA INT8 H3、512×512、22 帧、1 步真实前向验证；Block Cache 成功挂载执行，日志为 `cached 0/1 model forwards`，CPU cache 约 19.1 MiB。旧版分支已通过模拟旧接口的数值测试，但尚未在独立旧版 ComfyUI checkout 上进行真实模型回归。该测试工作流在采样完成后触发的核心 `SaveLatent` / `NestedTensor.contiguous` 错误与 Block Cache 无关。
+
+ComfyUI 提交 `efd4e951a` 为预取引入 CUDA Graph 状态，并将 `cleanup_prefetched_modules` 从单参数改为 `(module, comfy_modules)`。本节点以同次引入的 `GRAPH_MODULES` 能力为边界：当前 ComfyUI 同时传入预取 Block 和模块列表，旧版继续使用单参数清理。
 
 ## 本机冒烟基准
 
@@ -68,6 +70,6 @@ python -m unittest discover -s tests -v
 python -m ruff check .
 ```
 
-当前覆盖 14 项测试，包括音视频联合判定、真实跳层、连续命中上限、sampling window、UUID/shape/sigma 失效、target-only 独立存储、执行清理、模型克隆、patch 冲突、H3 音视频输出 shape/dtype，以及当前 raw / 旧版 slope-scaled 两种音频速度终结。
+当前覆盖 16 项测试，包括音视频联合判定、真实跳层、连续命中上限、sampling window、UUID/shape/sigma 失效、target-only 独立存储、执行清理、模型克隆、patch 冲突、新旧预取清理签名、H3 音视频输出 shape/dtype，以及当前 raw / 旧版 slope-scaled 两种音频速度终结。
 
 正式性能结论仍需完成官方 124 帧 T2V、FL2VA、Ref2VA 的音画质量矩阵与多次稳定计时。

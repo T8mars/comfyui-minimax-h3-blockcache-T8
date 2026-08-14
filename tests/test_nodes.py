@@ -14,6 +14,7 @@ node_module = importlib.import_module("custom_nodes.comfyui-minimax-h3-blockcach
 cache_module = importlib.import_module("custom_nodes.comfyui-minimax-h3-blockcache-T8.h3_block_cache")
 
 import comfy.model_patcher
+import comfy.model_prefetch
 import comfy.patcher_extension
 from comfy.ldm.minimax.model import MiniMaxH3Model
 
@@ -45,6 +46,41 @@ def _tiny_h3(blocks=4):
 
 
 class NodeTests(unittest.TestCase):
+    def _assert_prefetch_cleanup(self, takes_module):
+        block = object()
+        comfy_modules = [object()]
+        queue = [(None, (block, comfy_modules))]
+        model = types.SimpleNamespace(blocks=[block])
+        calls = []
+        original_queues = comfy.model_prefetch.PREFETCH_QUEUES
+        original_cleanup = comfy.model_prefetch.cleanup_prefetched_modules
+        original_takes_module = node_module.PREFETCH_CLEANUP_TAKES_MODULE
+
+        if takes_module:
+            def cleanup(module, modules):
+                calls.append((module, modules))
+        else:
+            def cleanup(modules):
+                calls.append(modules)
+
+        try:
+            comfy.model_prefetch.PREFETCH_QUEUES = [queue]
+            comfy.model_prefetch.cleanup_prefetched_modules = cleanup
+            node_module.PREFETCH_CLEANUP_TAKES_MODULE = takes_module
+            node_module._cleanup_short_circuited_prefetch(model)
+        finally:
+            comfy.model_prefetch.PREFETCH_QUEUES = original_queues
+            comfy.model_prefetch.cleanup_prefetched_modules = original_cleanup
+            node_module.PREFETCH_CLEANUP_TAKES_MODULE = original_takes_module
+
+        self.assertEqual(queue, [None])
+        self.assertEqual(len(calls), 1)
+        if takes_module:
+            self.assertIs(calls[0][0], block)
+            self.assertIs(calls[0][1], comfy_modules)
+        else:
+            self.assertIs(calls[0], comfy_modules)
+
     def test_node_clones_model_and_patches_only_boundary_blocks(self):
         original = _FakeModelPatcher(_tiny_h3())
 
@@ -67,6 +103,12 @@ class NodeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "already patched"):
             node_module.MiniMaxH3BlockCacheNode.execute(model, 0.12, 0.08, 0.95, 2, "cpu", 8, False)
+
+    def test_current_prefetch_cleanup_passes_prefetched_module(self):
+        self._assert_prefetch_cleanup(takes_module=True)
+
+    def test_legacy_prefetch_cleanup_keeps_single_argument(self):
+        self._assert_prefetch_cleanup(takes_module=False)
 
     def test_short_circuit_finalizer_preserves_h3_output_shapes(self):
         class _FinalLayer:

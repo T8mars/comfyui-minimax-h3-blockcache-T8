@@ -21,6 +21,7 @@ from .h3_block_cache import CACHE_KEY, H3BlockCache, H3BlockCacheConfig, H3Block
 
 WRAPPER_KEY = "minimax_h3_block_cache_t8"
 H3_RETURNS_RAW_AUDIO_VELOCITY = hasattr(comfy.model_sampling, "ModelSamplingAV")
+PREFETCH_CLEANUP_TAKES_MODULE = hasattr(comfy.model_prefetch, "GRAPH_MODULES")
 
 
 def _finalize_audio_velocity(
@@ -82,9 +83,12 @@ def _cleanup_short_circuited_prefetch(model: MiniMaxH3Model):
         for entry in queue:
             if not isinstance(entry, tuple):
                 continue
-            comfy_modules = entry[1][1]
+            prefetched_module, comfy_modules = entry[1]
             if comfy_modules is not None:
-                comfy.model_prefetch.cleanup_prefetched_modules(comfy_modules)
+                if PREFETCH_CLEANUP_TAKES_MODULE:
+                    comfy.model_prefetch.cleanup_prefetched_modules(prefetched_module, comfy_modules)
+                else:
+                    comfy.model_prefetch.cleanup_prefetched_modules(comfy_modules)
         queue[:] = [None]
         return
 
