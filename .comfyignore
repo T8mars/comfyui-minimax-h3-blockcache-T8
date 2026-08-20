@@ -1,0 +1,5 @@
+# Development and repository-only files
+tests/
+.github/
+.gitignore
+.comfyignore

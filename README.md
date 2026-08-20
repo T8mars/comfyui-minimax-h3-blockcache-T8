@@ -2,6 +2,18 @@
 
 面向 ComfyUI 原生 MiniMax H3 的实验性 F1B0 Block Cache 节点。它在每次模型调用中计算 Block 0，并在目标音频与目标视频都足够稳定时复用后续 Block 的 residual，直接跳过 Block 1–49。
 
+## 安装
+
+在 ComfyUI Manager 中搜索 `minimax-h3-block-cache-t8` 或 `MiniMax H3 Block Cache (T8)` 并安装，然后重启 ComfyUI。
+
+也可以手动克隆到 `ComfyUI/custom_nodes`：
+
+```powershell
+git clone https://github.com/T8mars/comfyui-minimax-h3-blockcache-T8.git
+```
+
+本节点要求 ComfyUI `0.30.0` 或更高版本，并使用 ComfyUI 原生 MiniMax H3；没有额外 Python 依赖。
+
 ## 使用
 
 重启 ComfyUI 后，在 `advanced/model_patches` 中添加 `MiniMax H3 Block Cache (T8)`：

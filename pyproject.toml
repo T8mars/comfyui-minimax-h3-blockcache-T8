@@ -1,0 +1,18 @@
+[project]
+name = "minimax-h3-block-cache-t8"
+version = "1.0.1"
+description = "An execution-scoped F1B0 residual block cache for ComfyUI's native MiniMax H3 model."
+license = { text = "All Rights Reserved" }
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Repository = "https://github.com/T8mars/comfyui-minimax-h3-blockcache-T8"
+
+[tool.comfy]
+PublisherId = "t8star"
+DisplayName = "MiniMax H3 Block Cache (T8)"
+requires-comfyui = ">=0.30.0"
