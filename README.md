@@ -51,6 +51,10 @@ MiniMax H3 Block Cache (T8)
 
 这是近似缓存，不保证同 seed 无损。不同 prompt、分辨率、帧数、步数、scheduler、attention backend 和量化格式都可能改变命中率与质量。
 
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE)。允许个人及商业使用、修改和再分发，但须遵守许可证中关于保留许可证文本、修改声明和归属声明等条件。
+
 ## ComfyUI 新旧版本兼容
 
 ComfyUI 提交 `bdcb886a4` 将 MiniMax H3 切换到 `ModelType.FLOW_AV` / `ModelSamplingAV`，并把 H3 音频输出从 slope-scaled velocity 改为 raw audio velocity。本节点在运行时检测 `ModelSamplingAV`：
