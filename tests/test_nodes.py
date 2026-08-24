@@ -104,6 +104,30 @@ class NodeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already patched"):
             node_module.MiniMaxH3BlockCacheNode.execute(model, 0.12, 0.08, 0.95, 2, "cpu", 8, False)
 
+    def test_node_rejects_spectrum_applied_before_block_cache(self):
+        model = _FakeModelPatcher(_tiny_h3())
+        model.model_options[node_module.SPECTRUM_BINDING_KEY] = object()
+
+        with self.assertRaisesRegex(ValueError, "Spectrum Apply MiniMax H3"):
+            node_module.MiniMaxH3BlockCacheNode.execute(model, 0.12, 0.08, 0.95, 2, "cpu", 8, False)
+
+    def test_sample_wrapper_rejects_spectrum_applied_after_block_cache(self):
+        original_model_options = {
+            node_module.SPECTRUM_BINDING_KEY: object(),
+            "transformer_options": {},
+        }
+        guider = types.SimpleNamespace(model_options=original_model_options)
+
+        class _Executor:
+            class_obj = guider
+
+            def __call__(self, *args, **kwargs):
+                raise AssertionError("sampling must not start when Spectrum is active")
+
+        with self.assertRaisesRegex(RuntimeError, "Spectrum Apply MiniMax H3"):
+            node_module.h3_block_cache_sample_wrapper(_Executor())
+        self.assertIs(guider.model_options, original_model_options)
+
     def test_current_prefetch_cleanup_passes_prefetched_module(self):
         self._assert_prefetch_cleanup(takes_module=True)
 

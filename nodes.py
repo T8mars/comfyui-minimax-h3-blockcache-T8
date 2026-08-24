@@ -20,6 +20,7 @@ from .h3_block_cache import CACHE_KEY, H3BlockCache, H3BlockCacheConfig, H3Block
 
 
 WRAPPER_KEY = "minimax_h3_block_cache_t8"
+SPECTRUM_BINDING_KEY = "spectrum_h3_binding"
 H3_RETURNS_RAW_AUDIO_VELOCITY = hasattr(comfy.model_sampling, "ModelSamplingAV")
 PREFETCH_CLEANUP_TAKES_MODULE = hasattr(comfy.model_prefetch, "GRAPH_MODULES")
 
@@ -47,6 +48,10 @@ def h3_block_cache_sample_wrapper(executor, *args, **kwargs):
     original_model_options = guider.model_options
     runtime_cache = None
     try:
+        if original_model_options.get(SPECTRUM_BINDING_KEY) is not None:
+            raise RuntimeError(
+                "MiniMax H3 Block Cache cannot be combined with Spectrum Apply MiniMax H3; use only one acceleration node"
+            )
         transformer_options = original_model_options["transformer_options"]
         if "easycache" in transformer_options:
             raise RuntimeError("MiniMax H3 Block Cache cannot be combined with EasyCache or LazyCache")
@@ -172,6 +177,10 @@ class MiniMaxH3BlockCacheNode(io.ComfyNode):
         diffusion_model = model.model.diffusion_model
         if not isinstance(diffusion_model, MiniMaxH3Model):
             raise ValueError("MiniMax H3 Block Cache requires a native MiniMax H3 diffusion model")
+        if model.model_options.get(SPECTRUM_BINDING_KEY) is not None:
+            raise ValueError(
+                "MiniMax H3 Block Cache cannot be combined with Spectrum Apply MiniMax H3; use only one acceleration node"
+            )
 
         total_blocks = len(diffusion_model.blocks)
         if total_blocks < 2:

@@ -38,7 +38,7 @@ MiniMax H3 Block Cache (T8)
 | `cache_device` | `cpu` | CPU 节省显存；GPU 减少传输但占显存 |
 | `metric_stride` | `8` | 音频/视频稳定性指标的抽样步幅 |
 
-节点只接受 ComfyUI 原生 `MiniMaxH3Model`，并拒绝 EasyCache、LazyCache 或已有的 H3 `double_block` replacement。节点返回克隆后的 MODEL，不修改输入模型。
+节点只接受 ComfyUI 原生 `MiniMaxH3Model`，并拒绝 EasyCache、LazyCache、Spectrum Apply MiniMax H3 或已有的 H3 `double_block` replacement。Block Cache 与 Spectrum 都会近似跳过 Transformer 计算，但两者没有共享的缓存、回放或失效契约，不能串联使用。节点返回克隆后的 MODEL，不修改输入模型。
 
 ## 实现边界
 
@@ -82,6 +82,6 @@ python -m unittest discover -s tests -v
 python -m ruff check .
 ```
 
-当前覆盖 16 项测试，包括音视频联合判定、真实跳层、连续命中上限、sampling window、UUID/shape/sigma 失效、target-only 独立存储、执行清理、模型克隆、patch 冲突、新旧预取清理签名、H3 音视频输出 shape/dtype，以及当前 raw / 旧版 slope-scaled 两种音频速度终结。
+当前覆盖 18 项测试，包括音视频联合判定、真实跳层、连续命中上限、sampling window、UUID/shape/sigma 失效、target-only 独立存储、执行清理、模型克隆、patch 冲突、Spectrum 前后两种连接顺序的互斥、新旧预取清理签名、H3 音视频输出 shape/dtype，以及当前 raw / 旧版 slope-scaled 两种音频速度终结。
 
 正式性能结论仍需完成官方 124 帧 T2V、FL2VA、Ref2VA 的音画质量矩阵与多次稳定计时。

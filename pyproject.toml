@@ -1,6 +1,6 @@
 [project]
 name = "minimax-h3-block-cache-t8"
-version = "1.0.1"
+version = "1.0.2"
 description = "An execution-scoped F1B0 residual block cache for ComfyUI's native MiniMax H3 model."
 license = { text = "All Rights Reserved" }
 requires-python = ">=3.10"
