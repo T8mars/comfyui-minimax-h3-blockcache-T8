@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 import logging
 
 import torch
 
+try:
+    import comfy.model_prefetch as _model_prefetch
+except ImportError:
+    _model_prefetch = None
+
 
 CACHE_KEY = "minimax_h3_block_cache_t8"
+
+
+def _pause_cache_allocations():
+    pause_malloc_graph = getattr(_model_prefetch, "pause_malloc_graph", None)
+    if pause_malloc_graph is None:
+        return contextlib.nullcontext()
+    return pause_malloc_graph()
 
 
 @dataclass(frozen=True)
@@ -271,22 +284,25 @@ class H3BlockPatch:
             raise RuntimeError("MiniMax H3 Block Cache runtime state is missing")
 
         if self.block_index == 0:
-            cache.begin_forward(args["img"], args["mod_segments"], args["transformer_options"])
+            with _pause_cache_allocations():
+                cache.begin_forward(args["img"], args["mod_segments"], args["transformer_options"])
             output = extra_options["original_block"](args)
-            cache.finish_first_block(output["img"])
-            if cache.current.use_cache:
-                cache.apply_cached_tail(output["img"])
-                audio_start, audio_end, audio_tag = args["mod_segments"][-2]
-                video_start, video_end, video_tag = args["mod_segments"][-1]
-                raise H3BlockCacheHit(
-                    output["img"],
-                    args["t_emb"],
-                    (audio_start, audio_end, audio_tag // 3),
-                    (video_start, video_end, video_tag // 3),
-                )
+            with _pause_cache_allocations():
+                cache.finish_first_block(output["img"])
+                if cache.current.use_cache:
+                    cache.apply_cached_tail(output["img"])
+                    audio_start, audio_end, audio_tag = args["mod_segments"][-2]
+                    video_start, video_end, video_tag = args["mod_segments"][-1]
+                    raise H3BlockCacheHit(
+                        output["img"],
+                        args["t_emb"],
+                        (audio_start, audio_end, audio_tag // 3),
+                        (video_start, video_end, video_tag // 3),
+                    )
             return output
 
         output = extra_options["original_block"](args)
         if self.block_index == cache.total_blocks - 1:
-            cache.finish_last_block(output)
+            with _pause_cache_allocations():
+                cache.finish_last_block(output)
         return output

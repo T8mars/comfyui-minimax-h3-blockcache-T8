@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 
 from comfy_api.latest import io, ComfyExtension
@@ -8,7 +9,7 @@ import comfy.model_sampling
 import comfy.model_patcher
 import comfy.model_prefetch
 import comfy.patcher_extension
-from comfy.ldm.minimax.model import MiniMaxH3Model, unpack_audio, unpatchify_video
+from comfy.ldm.minimax.model import FinalLayer, MiniMaxH3Model, unpack_audio, unpatchify_video
 
 try:
     # Present in legacy ComfyUI H3, removed when H3 switched to raw audio velocity.
@@ -21,8 +22,18 @@ from .h3_block_cache import CACHE_KEY, H3BlockCache, H3BlockCacheConfig, H3Block
 
 WRAPPER_KEY = "minimax_h3_block_cache_t8"
 SPECTRUM_BINDING_KEY = "spectrum_h3_binding"
+BLOCK_SPARSE_CALLBACK_KEY = "block_sparse_attention"
 H3_RETURNS_RAW_AUDIO_VELOCITY = hasattr(comfy.model_sampling, "ModelSamplingAV")
+H3_FINAL_LAYER_TAKES_SAMPLING_ARGS = "sample_sigmas" in inspect.signature(FinalLayer.forward).parameters
 PREFETCH_CLEANUP_TAKES_MODULE = hasattr(comfy.model_prefetch, "GRAPH_MODULES")
+PREFETCH_SUPPORTS_MALLOC_SCOPE = "malloc_scope" in inspect.signature(comfy.model_prefetch.prefetch_queue_pop).parameters
+
+
+def _has_block_sparse_attention(model) -> bool:
+    get_callbacks = getattr(model, "get_callbacks", None)
+    if get_callbacks is None:
+        return False
+    return bool(get_callbacks(comfy.patcher_extension.CallbacksMP.ON_CLEANUP, BLOCK_SPARSE_CALLBACK_KEY))
 
 
 def _finalize_audio_velocity(
@@ -52,6 +63,10 @@ def h3_block_cache_sample_wrapper(executor, *args, **kwargs):
             raise RuntimeError(
                 "MiniMax H3 Block Cache cannot be combined with Spectrum Apply MiniMax H3; use only one acceleration node"
             )
+        if _has_block_sparse_attention(guider.model_patcher):
+            raise RuntimeError(
+                "MiniMax H3 Block Cache cannot be combined with Block Sparse Attention; use only one acceleration node"
+            )
         transformer_options = original_model_options["transformer_options"]
         if "easycache" in transformer_options:
             raise RuntimeError("MiniMax H3 Block Cache cannot be combined with EasyCache or LazyCache")
@@ -74,7 +89,9 @@ def h3_block_cache_sample_wrapper(executor, *args, **kwargs):
         guider.model_options = original_model_options
 
 
-def _cleanup_short_circuited_prefetch(model: MiniMaxH3Model):
+def _cleanup_short_circuited_prefetch(model: MiniMaxH3Model, device):
+    if PREFETCH_SUPPORTS_MALLOC_SCOPE:
+        comfy.model_prefetch.prefetch_queue_pop(None, device, None, malloc_scope="block")
     block_ids = {id(block) for block in model.blocks}
     for queue in reversed(comfy.model_prefetch.PREFETCH_QUEUES):
         belongs_to_model = False
@@ -95,7 +112,7 @@ def _cleanup_short_circuited_prefetch(model: MiniMaxH3Model):
                 else:
                     comfy.model_prefetch.cleanup_prefetched_modules(comfy_modules)
         queue[:] = [None]
-        return
+        break
 
 
 def h3_block_cache_diffusion_wrapper(executor, *args, **kwargs):
@@ -103,16 +120,30 @@ def h3_block_cache_diffusion_wrapper(executor, *args, **kwargs):
         return executor(*args, **kwargs)
     except H3BlockCacheHit as hit:
         model = executor.class_obj
-        _cleanup_short_circuited_prefetch(model)
-
         video_x, audio_x = args[0][0], args[0][1]
+        _cleanup_short_circuited_prefetch(model, video_x.device)
+
         timestep = args[1]
         transformer_options = args[3]
         orig_t, orig_h, orig_w = video_x.shape[2:]
         padded_video = comfy.ldm.common_dit.pad_to_patch_size(video_x, model.patch_size)
         latent_t, latent_h, latent_w = padded_video.shape[2:]
 
-        video_rows, audio_rows = model.final_layer(hit.hidden, hit.t_emb, hit.video_segment, hit.audio_segment)
+        sigma_video = (timestep.flatten()[0] / 1000.0).float().clamp(min=1e-6)
+        shift_video = float(transformer_options.get("minimax_h3_sigma_shift_video", model.sigma_shift_video))
+        shift_audio = float(transformer_options.get("minimax_h3_sigma_shift_audio", model.sigma_shift_audio))
+        if H3_FINAL_LAYER_TAKES_SAMPLING_ARGS:
+            video_rows, audio_rows = model.final_layer(
+                hit.hidden,
+                hit.t_emb,
+                hit.video_segment,
+                hit.audio_segment,
+                sigma_video,
+                transformer_options.get("sample_sigmas"),
+                (shift_video, shift_audio),
+            )
+        else:
+            video_rows, audio_rows = model.final_layer(hit.hidden, hit.t_emb, hit.video_segment, hit.audio_segment)
         video_out = unpatchify_video(
             video_rows,
             latent_t,
@@ -124,9 +155,6 @@ def h3_block_cache_diffusion_wrapper(executor, *args, **kwargs):
         video_out = video_out[:, :, :orig_t, :orig_h, :orig_w]
         audio_out = unpack_audio(audio_rows)
 
-        sigma_video = (timestep.flatten()[0] / 1000.0).float().clamp(min=1e-6)
-        shift_video = float(transformer_options.get("minimax_h3_sigma_shift_video", model.sigma_shift_video))
-        shift_audio = float(transformer_options.get("minimax_h3_sigma_shift_audio", model.sigma_shift_audio))
         audio_velocity = _finalize_audio_velocity(
             audio_out,
             sigma_video,
@@ -180,6 +208,10 @@ class MiniMaxH3BlockCacheNode(io.ComfyNode):
         if model.model_options.get(SPECTRUM_BINDING_KEY) is not None:
             raise ValueError(
                 "MiniMax H3 Block Cache cannot be combined with Spectrum Apply MiniMax H3; use only one acceleration node"
+            )
+        if _has_block_sparse_attention(model):
+            raise ValueError(
+                "MiniMax H3 Block Cache cannot be combined with Block Sparse Attention; use only one acceleration node"
             )
 
         total_blocks = len(diffusion_model.blocks)

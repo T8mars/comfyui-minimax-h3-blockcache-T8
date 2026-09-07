@@ -1,3 +1,4 @@
+import contextlib
 import pathlib
 import sys
 import unittest
@@ -8,6 +9,7 @@ import torch
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import h3_block_cache as cache_module
 from h3_block_cache import H3BlockCache, H3BlockCacheConfig, H3BlockCacheHit, H3BlockPatch
 
 
@@ -180,6 +182,34 @@ class H3BlockCacheTests(unittest.TestCase):
 
         self.assertEqual(cache.streams, {})
         self.assertIsNone(cache.current)
+
+    def test_block_patch_pauses_malloc_graph_around_cache_state(self):
+        cache = H3BlockCache(_config(), total_blocks=4).prepare(_Sampling())
+        args = {
+            "img": torch.ones(6, 4),
+            "t_emb": torch.empty(1, 4),
+            "mod_segments": [(0, 1, 1), (1, 3, 5), (3, 6, 0)],
+            "transformer_options": {"minimax_h3_block_cache_t8": cache, "sigmas": torch.tensor([0.5])},
+        }
+        events = []
+
+        @contextlib.contextmanager
+        def pause():
+            events.append("enter")
+            try:
+                yield
+            finally:
+                events.append("exit")
+
+        original_pause = cache_module._pause_cache_allocations
+        cache_module._pause_cache_allocations = pause
+        try:
+            output = H3BlockPatch(0)(args, {"original_block": lambda call_args: {"img": call_args["img"] + 0.1}})
+            args["img"] = output["img"]
+            H3BlockPatch(3)(args, {"original_block": lambda call_args: {"img": call_args["img"] + 0.2}})
+        finally:
+            cache_module._pause_cache_allocations = original_pause
+        self.assertEqual(events, ["enter", "exit", "enter", "exit", "enter", "exit"])
 
 
 if __name__ == "__main__":
